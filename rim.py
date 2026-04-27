@@ -12,60 +12,63 @@ keywords = ["audiovisuel", "musique", "sonorisation", "studio"]
 
 async def scrape_tuneps():
     async with async_playwright() as p:
-        # On simule un vrai navigateur Windows pour éviter le blocage
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        # On définit un écran plus grand pour être sûr que les boutons sont cliquables
+        context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = await context.new_page()
         
         try:
-            print("🌐 Ouverture du portail TUNEPS...")
+            print("🌐 Connexion à TUNEPS...")
             await page.goto("https://www.tuneps.tn/search", wait_until="networkidle", timeout=60000)
             
             for word in keywords:
-                print(f"🔍 Traitement de la pépite : {word}")
+                print(f"🔍 Recherche de la pépite : {word}")
                 
-                # 1. Attente et Saisie de l'Objet A.O
-                # On utilise un sélecteur plus large au cas où ng-reflect n'est pas encore là
-                input_field = page.locator("input[ng-reflect-name='bidNmFr'], input[id*='mat-input']").first
-                await input_field.wait_for(state="visible", timeout=20000)
+                # 1. On attend l'input 'Objet A.O'
+                input_selector = "input[ng-reflect-name='bidNmFr']"
+                await page.wait_for_selector(input_selector, state="visible", timeout=15000)
                 
-                # On vide le champ proprement (simulation clavier)
-                await input_field.click(click_count=3)
+                # On nettoie le champ avant d'écrire
+                await page.click(input_selector, click_count=3)
                 await page.keyboard.press("Backspace")
-                await input_field.fill(word)
+                await page.fill(input_selector, word)
                 
-                # 2. Clic sur le BON bouton 'Rechercher'
-                # On cible le bouton qui contient l'icône 'search'
-                search_btn = page.locator("button.filter-btn").filter(has=page.locator("mat-icon:has-text('search')"))
+                # 2. Clic sur le bouton de recherche
+                # On utilise un sélecteur qui cherche le texte 'Rechercher' à l'intérieur du bouton bleu
+                search_btn = page.locator("button").filter(has_text="Rechercher")
                 await search_btn.click()
                 
-                # 3. Attente du tableau de résultats
-                # On attend que le loader Angular disparaisse et que les lignes apparaissent
+                # 3. Attente dynamique des résultats
+                # On fait une pause forcée car TUNEPS met du temps à rafraîchir son tableau Angular
+                await page.wait_for_timeout(5000) 
+                
                 try:
-                    await page.wait_for_selector("tr.mat-row", timeout=15000)
+                    # On attend l'apparition d'une cellule de donnée réelle
+                    await page.wait_for_selector("td.mat-cell", timeout=15000)
                     rows = await page.query_selector_all("tr.mat-row")
-                    print(f"✅ {len(rows)} offres trouvées.")
+                    print(f"✅ {len(rows)} offres trouvées pour '{word}'.")
                     
                     for row in rows:
                         cells = await row.query_selector_all("td.mat-cell")
                         if len(cells) >= 5:
-                            # Extraction propre
+                            # Extraction des textes
                             organisme = (await cells[1].inner_text()).strip()
                             titre = (await cells[3].inner_text()).strip()
                             expiration = (await cells[4].inner_text()).strip()
 
-                            # 4. Envoi Supabase
+                            # 4. Insertion Supabase
                             supabase.table("offres").insert({
                                 "titre": titre,
                                 "organisme": organisme,
                                 "date_expiration": expiration,
                                 "secteur": "TUNEPS"
                             }).execute()
-                
+                            print(f"💾 Sauvegardé : {organisme}")
+                            
                 except Exception:
-                    print(f"ℹ️ Aucun résultat visuel pour '{word}'")
+                    print(f"ℹ️ Pas de résultats visibles pour '{word}' après recherche.")
                 
-                # Petite pause pour ne pas saturer le serveur
+                # Petite pause pour éviter le blocage IP
                 await page.wait_for_timeout(2000)
 
         except Exception as e:
