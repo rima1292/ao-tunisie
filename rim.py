@@ -1,5 +1,4 @@
-
- import os
+import os
 import asyncio
 from playwright.async_api import async_playwright
 from supabase import create_client
@@ -22,28 +21,29 @@ async def scrape_tuneps():
             await page.goto("https://www.tuneps.tn/search", wait_until="networkidle", timeout=60000)
             
             for word in keywords:
-                print(f"🔍 Recherche manuelle pour : {word}")
+                print(f"🔍 Traitement du mot-clé : {word}")
                 
-                # Ciblage de l'input 'Objet A.O'
+                # 1. Attente de l'input et saisie
                 input_selector = "input[ng-reflect-name='bidNmFr']"
                 await page.wait_for_selector(input_selector, state="visible", timeout=20000)
                 
-                # Simulation humaine : vider et remplir
+                # On vide le champ proprement avant d'écrire
                 await page.click(input_selector, click_count=3)
                 await page.keyboard.press("Backspace")
                 await page.fill(input_selector, word)
                 
-                # Clic sur le bouton bleu 'Rechercher'
-                await page.click("button.filter-btn.mat-primary")
+                # 2. Clic sur le bouton Rechercher
+                # Utilisation de la classe mat-primary du bouton bleu
+                await page.click("button.mat-primary")
                 
-                # Pause pour le chargement Angular
+                # 3. Pause pour laisser Angular charger les résultats
                 await page.wait_for_timeout(4000) 
                 
                 try:
-                    # Lecture des résultats
+                    # On cherche les lignes de résultats mat-row
                     rows = await page.query_selector_all("tr.mat-row")
                     if rows:
-                        print(f"✅ {len(rows)} offres trouvées.")
+                        print(f"✅ {len(rows)} offres trouvées pour '{word}'")
                         for row in rows:
                             cells = await row.query_selector_all("td.mat-cell")
                             if len(cells) >= 5:
@@ -51,18 +51,20 @@ async def scrape_tuneps():
                                 titre = (await cells[3].inner_text()).strip()
                                 expiration = (await cells[4].inner_text()).strip()
 
-                                # Insertion Supabase
+                                # Insertion dans Supabase
                                 supabase.table("offres").insert({
-                                    "titre": titre, "organisme": organisme,
-                                    "date_expiration": expiration, "secteur": "TUNEPS"
+                                    "titre": titre,
+                                    "organisme": organisme,
+                                    "date_expiration": expiration,
+                                    "secteur": "TUNEPS"
                                 }).execute()
                     else:
                         print(f"ℹ️ Aucun résultat pour '{word}'")
-                except:
+                except Exception:
                     continue
 
         except Exception as e:
-            print(f"❌ Erreur : {e}")
+            print(f"❌ Erreur critique : {e}")
         finally:
             await browser.close()
 
