@@ -9,7 +9,7 @@ url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 supabase = create_client(url, key)
 
-keywords = ["musique", "audio", "visuel", instrument",سمعية بصرية","studio","sonorisation"]
+keywords = ["musique", "audio", "visuel", "instrument","سمعية بصرية","studio","sonorisation"]
 
 async def scrape_tuneps():
     async with async_playwright() as p:
