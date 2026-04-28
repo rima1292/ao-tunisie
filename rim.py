@@ -36,38 +36,54 @@ async def scrape_tuneps():
             count = 0
             
             for row in rows:
-                text = await row.inner_text()
-                if keyword.lower() in text.lower() and "Désolé" not in text:
-                    cells = await row.locator("td").all()
+                cells = await row.locator("td").all()
+                
+                if len(cells) >= 5:
+                    # --- SECURITÉ INDEX ---
+                    # On récupère le texte des deux premières cellules pour être sûr
+                    cell0 = (await cells[0].inner_text()).strip()
+                    cell1 = (await cells[1].inner_text()).strip()
                     
-                    if len(cells) >= 5:
-                        # Extraction selon l'ordre du tableau TUNEPS
-                        num_ao = (await cells[0].inner_text()).strip()      # N° A.O
-                        org = (await cells[1].inner_text()).strip()         # Acheteur public
-                        date_pub = (await cells[2].inner_text()).strip()    # Date Publication
-                        titre = (await cells[3].inner_text()).strip()       # Objet A.O
-                        date_lim = (await cells[4].inner_text()).strip()    # Dernier Délai (Expiration)
+                    # Si la cellule 0 est vide (icône), le numéro est dans la cellule 1
+                    # Sinon, c'est la cellule 0
+                    num_ao = cell0 if len(cell0) > 2 else cell1
+                    
+                    # On vérifie si cette ligne est bien une offre (contient le mot clé)
+                    ligne_complete = await row.inner_text()
+                    
+                    if keyword.lower() in ligne_complete.lower() and "Désolé" not in ligne_complete:
+                        # Extraction des autres champs (on décale si num_ao était en index 1)
+                        # On utilise des index fixes basés sur la structure standard
+                        org = (await cells[1].inner_text()).strip()
+                        date_pub = (await cells[2].inner_text()).strip()
+                        titre = (await cells[3].inner_text()).strip()
+                        date_lim = (await cells[4].inner_text()).strip()
                         
-                        print(f"Pépite : {num_ao} | {titre[:30]}...")
-                        
+                        # --- LOG DE DEBUG ---
+                        print(f"--- TENTATIVE INSERTION ---")
+                        print(f"NUMERO_AO trouvé : '{num_ao}'")
+                        print(f"TITRE : '{titre[:30]}...'")
+
                         try:
-                            # On envoie TOUS les champs vers Supabase
-                            supabase.table("offres").insert({
-                                "numero_ao": num_ao,
-                                "titre": titre,
-                                "organisme": org,
-                                "date_publication": date_pub,
-                                "date_expiration": date_lim,
+                            data_to_insert = {
+                                "numero_ao": str(num_ao), # Force en texte
+                                "titre": str(titre),
+                                "organisme": str(org),
+                                "date_publication": str(date_pub),
+                                "date_expiration": str(date_lim),
                                 "secteur": "TUNEPS"
-                            }).execute()
+                            }
+                            
+                            supabase.table("offres").insert(data_to_insert).execute()
+                            print(f"✅ Succès pour : {num_ao}")
                             count += 1
                         except Exception as e_db:
-                            print(f"Erreur ou doublon pour {num_ao}")
+                            print(f"❌ Erreur Supabase : {e_db}")
 
-            print(f"Terminé : {count} nouvelles offres ajoutées avec tous les détails.")
+            print(f"\nTerminé : {count} offres traitées.")
 
         except Exception as e:
-            print(f"Erreur : {e}")
+            print(f"❌ Erreur Script : {e}")
         finally:
             await page.wait_for_timeout(5000)
             await browser.close()
