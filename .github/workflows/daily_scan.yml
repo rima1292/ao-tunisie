@@ -9,7 +9,7 @@ on:
 # 2. QUE DOIT FAIRE LE ROBOT ?
 jobs:
   scrape:
-    runs-on: ubuntu-latest # On utilise Linux (pas d'erreurs Visual C++ ici !)
+    runs-on: self-hosted # On utilise Linux (pas d'erreurs Visual C++ ici !)
     
     steps:
       - name: Récupérer le code de Rim
