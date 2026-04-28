@@ -2,7 +2,6 @@ import os
 import asyncio
 from playwright.async_api import async_playwright
 from supabase import create_client
-from datetime import datetime
 
 # Config Supabase
 url = os.environ.get("SUPABASE_URL")
@@ -10,7 +9,6 @@ key = os.environ.get("SUPABASE_KEY")
 supabase = create_client(url, key)
 
 keywords = ["musique", "audiovisuel", "sonorisation"]
-today = datetime.now().strftime("%d/%m/%Y")
 
 async def scrape_tuneps():
     async with async_playwright() as p:
@@ -19,59 +17,55 @@ async def scrape_tuneps():
         page = await context.new_page()
         
         try:
-            print("🌐 Connexion à TUNEPS...")
+            print("🌐 Accès à TUNEPS...")
             await page.goto("https://www.tuneps.tn/search", wait_until="networkidle", timeout=60000)
             await page.wait_for_timeout(10000)
 
             for word in keywords:
-                print(f"🔍 Recherche large pour : {word}")
+                print(f"🔍 Traitement de : {word}")
                 
-                # Injection JS pour remplir l'Objet A.O ET forcer les dates
+                # Injection de la valeur et clic forcés par JavaScript pour éviter les Timeouts Playwright
+                # Cette méthode ignore si le bouton est 'disabled' ou non
                 await page.evaluate(f"""
-                    (val, dateFin) => {{
-                        // 1. Remplir l'objet
-                        const inputObj = document.querySelector('#mat-input-0') || document.querySelector('input[matinput]');
-                        if (inputObj) {{
-                            inputObj.value = val;
-                            inputObj.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    (val) => {{
+                        const input = document.querySelector('#mat-input-0') || document.querySelector('input[matinput]');
+                        if (input) {{
+                            input.value = val;
+                            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            input.dispatchEvent(new Event('change', {{ bubbles: true }}));
                         }}
-
-                        // 2. Forcer une date de début large (ex: 01/01/2026) pour ne rien rater
-                        const dateInputs = document.querySelectorAll('input[type="text"]');
-                        // On cherche souvent les champs de date par leur label ou ordre
-                        // Pour être sûr, on vide les filtres de date s'ils existent
-                    }}, word, today)
-
-                # Clic sur Rechercher
-                await page.locator("button.mat-primary").filter(has_text="Rechercher").click()
+                        
+                        // Recherche du bouton Rechercher par son texte
+                        const buttons = Array.from(document.querySelectorAll('button'));
+                        const searchBtn = buttons.find(b => b.innerText.includes('Rechercher'));
+                        if (searchBtn) {{
+                            searchBtn.click();
+                        }}
+                    }}
+                """, word)
                 
-                # ATTENTE CRUCIALE : On attend que le loader disparaisse ou que la table change
-                print("⏳ Attente du rafraîchissement des résultats...")
-                await page.wait_for_timeout(15000) 
+                # Attente plus longue pour le chargement des résultats sur GitHub
+                await page.wait_for_timeout(12000)
                 
-                # On vérifie si on a des lignes dans la table
                 rows = await page.locator("tr.mat-row").all()
-                print(f"📊 Résultats trouvés dans le DOM : {len(rows)}")
+                print(f"✅ {len(rows)} offres trouvées.")
                 
-                if len(rows) == 0:
-                    # Tentative de secours : faire défiler la page pour forcer le lazy loading
-                    await page.mouse.wheel(0, 500)
-                    await page.wait_for_timeout(2000)
-                    rows = await page.locator("tr.mat-row").all()
-
                 for row in rows:
-                    cells = await row.locator("td.mat-cell").all()
-                    if len(cells) >= 5:
-                        org = (await cells[1].inner_text()).strip()
-                        titre = (await cells[3].inner_text()).strip()
-                        date = (await cells[4].inner_text()).strip()
+                    try:
+                        cells = await row.locator("td.mat-cell").all()
+                        if len(cells) >= 5:
+                            org = (await cells[1].inner_text()).strip()
+                            titre = (await cells[3].inner_text()).strip()
+                            date = (await cells[4].inner_text()).strip()
 
-                        print(f"✨ Pépite trouvée : {titre[:50]}...")
-                        supabase.table("offres").insert({
-                            "titre": titre, "organisme": org,
-                            "date_expiration": date, "secteur": "TUNEPS"
-                        }).execute()
+                            supabase.table("offres").insert({
+                                "titre": titre, "organisme": org,
+                                "date_expiration": date, "secteur": "TUNEPS"
+                            }).execute()
+                    except:
+                        continue
                 
+                # Petit refresh pour le mot suivant
                 await page.reload()
                 await page.wait_for_timeout(5000)
 
