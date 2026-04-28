@@ -23,6 +23,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          # SOLUTION : Force l'affichage des emojis sur Windows
           PYTHONIOENCODING: utf-8
-        run: python rim.py
+        run: |
+          python rim.py
+          python rim_audio.py
+          
