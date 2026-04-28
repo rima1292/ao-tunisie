@@ -1,15 +1,13 @@
 name: Scan Quotidien Pépites Rim
 
-# 1. QUAND LANCER LE ROBOT ?
 on:
   schedule:
-    - cron: '0 8 * * *' # Tous les matins à 8h00 (UTC)
-  workflow_dispatch:      # Permet de le lancer manuellement d'un clic
+    - cron: '0 8 * * *'
+  workflow_dispatch:
 
-# 2. QUE DOIT FAIRE LE ROBOT ?
 jobs:
   scrape:
-    runs-on: self-hosted # Utilise ton PC (le runner local)
+    runs-on: self-hosted
 
     steps:
       - name: Récupérer le code de Rim
@@ -23,7 +21,8 @@ jobs:
 
       - name: Lancer la recherche de pépites
         env:
-          # On récupère tes clés secrètes depuis les "Settings" de GitHub
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # SOLUTION ICI : Force l'affichage des emojis sur Windows
+          PYTHONIOENCODING: utf-8
         run: python rim.py
