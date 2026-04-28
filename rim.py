@@ -25,46 +25,46 @@ async def scrape_tuneps():
             await page.wait_for_selector('input', timeout=20000)
             await page.wait_for_timeout(3000)
 
-            print("Action : Saisie dans le champ Objet A.O...")
             tous_les_inputs = page.locator('input')
-            
             await tous_les_inputs.nth(1).click()
             await tous_les_inputs.nth(1).fill(keyword)
             
             await page.locator('button:has-text("Rechercher")').click()
-            print(f"Recherche lancée pour l'objet : {keyword}")
-
             await page.wait_for_timeout(10000) 
 
             rows = await page.locator("tr").all()
-            print(f"Analyse de {len(rows)} lignes trouvées...")
-            
             count = 0
+            
             for row in rows:
                 text = await row.inner_text()
                 if keyword.lower() in text.lower() and "Désolé" not in text:
                     cells = await row.locator("td").all()
-                    # On vérifie qu'on a bien toutes les colonnes nécessaires
+                    
                     if len(cells) >= 5:
-                        # Index basés sur le tableau TUNEPS :
-                        # 0=N°AO, 1=Acheteur, 2=Date Pub, 3=Objet, 4=Délai
-                        org = (await cells[1].inner_text()).strip()
-                        date_pub = (await cells[2].inner_text()).strip() # <--- AJOUT ICI
-                        titre = (await cells[3].inner_text()).strip()
+                        # Extraction selon l'ordre du tableau TUNEPS
+                        num_ao = (await cells[0].inner_text()).strip()      # N° A.O
+                        org = (await cells[1].inner_text()).strip()         # Acheteur public
+                        date_pub = (await cells[2].inner_text()).strip()    # Date Publication
+                        titre = (await cells[3].inner_text()).strip()       # Objet A.O
+                        date_lim = (await cells[4].inner_text()).strip()    # Dernier Délai (Expiration)
                         
-                        print(f"Pépite trouvée : {titre[:50]}... (Publié le : {date_pub})")
+                        print(f"Pépite : {num_ao} | {titre[:30]}...")
+                        
                         try:
+                            # On envoie TOUS les champs vers Supabase
                             supabase.table("offres").insert({
+                                "numero_ao": num_ao,
                                 "titre": titre,
                                 "organisme": org,
-                                "date_publication": date_pub, # <--- INSERTION ICI
+                                "date_publication": date_pub,
+                                "date_expiration": date_lim,
                                 "secteur": "TUNEPS"
                             }).execute()
                             count += 1
                         except Exception as e_db:
-                            print(f"Erreur DB : {e_db}")
+                            print(f"Erreur ou doublon pour {num_ao}")
 
-            print(f"Terminé : {count} offres ajoutées.")
+            print(f"Terminé : {count} nouvelles offres ajoutées avec tous les détails.")
 
         except Exception as e:
             print(f"Erreur : {e}")
