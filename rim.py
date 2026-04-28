@@ -3,7 +3,7 @@ import asyncio
 from playwright.async_api import async_playwright
 from supabase import create_client
 
-# 1. Configuration Supabase
+# Config Supabase
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 supabase = create_client(url, key)
@@ -12,50 +12,51 @@ keywords = ["musique", "audiovisuel", "sonorisation"]
 
 async def scrape_tuneps():
     async with async_playwright() as p:
+        # On lance un vrai navigateur pour mieux gérer les scripts complexes
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(viewport={'width': 1280, 'height': 800})
         page = await context.new_page()
         
         try:
             print("🌐 Connexion à TUNEPS...")
-            await page.goto("https://www.tuneps.tn/search", wait_until="domcontentloaded", timeout=60000)
+            await page.goto("https://www.tuneps.tn/search", wait_until="load", timeout=90000)
             
-            # Attente longue pour que les scripts Angular se stabilisent sur GitHub
-            await page.wait_for_timeout(15000)
+            # Attente très longue pour GitHub Actions
+            await page.wait_for_timeout(20000)
 
             for word in keywords:
-                print(f"🚀 Tentative d'injection pour : {word}")
+                print(f"🚀 Scan profond pour : {word}")
                 
-                # JavaScript pour trouver l'input par sa classe plutôt que son ID dynamique
-                # On force aussi la suppression de l'attribut disabled
-                try:
-                    await page.evaluate(f"""
-                        (val) => {{
-                            const input = document.querySelector('input.mat-input-element') || document.querySelector('input[matinput]');
+                # JavaScript avancé pour trouver l'input par son label
+                success = await page.evaluate(f"""
+                    (val) => {{
+                        const labels = Array.from(document.querySelectorAll('label, mat-label'));
+                        const targetLabel = labels.find(l => l.innerText.includes('Objet A.O'));
+                        
+                        if (targetLabel) {{
+                            const inputId = targetLabel.getAttribute('for') || 'mat-input-0';
+                            const input = document.getElementById(inputId) || document.querySelector('input[matinput]');
+                            
                             if (input) {{
                                 input.disabled = false;
                                 input.readOnly = false;
                                 input.value = val;
-                                // On déclenche les événements pour qu'Angular détecte la saisie
                                 input.dispatchEvent(new Event('input', {{ bubbles: true }}));
                                 input.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                                input.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                                return true;
                             }}
                         }}
-                    """, word)
-                    
-                    # On laisse un court instant pour que le bouton 'Rechercher' s'active
-                    await page.wait_for_timeout(2000)
-                    
-                    # Clic sur le bouton de recherche
-                    search_btn = page.locator("button.mat-primary").filter(has_text="Rechercher")
-                    await search_btn.click()
-                    
-                    # Attente des résultats
+                        return false;
+                    }}
+                """, word)
+
+                if success:
+                    # Clic sur Rechercher
+                    await page.locator("button.mat-primary").filter(has_text="Rechercher").click()
                     await page.wait_for_timeout(10000)
                     
                     rows = await page.locator("tr.mat-row").all()
-                    print(f"✅ {len(rows)} offres trouvées pour '{word}'.")
+                    print(f"✅ {len(rows)} offres trouvées.")
                     
                     for row in rows:
                         cells = await row.locator("td.mat-cell").all()
@@ -64,16 +65,13 @@ async def scrape_tuneps():
                             titre = (await cells[3].inner_text()).strip()
                             date = (await cells[4].inner_text()).strip()
 
-                            # Insertion Supabase
                             supabase.table("offres").insert({
                                 "titre": titre, "organisme": org,
                                 "date_expiration": date, "secteur": "TUNEPS"
                             }).execute()
-                            
-                except Exception as e:
-                    print(f"⚠️ Erreur pour '{word}': {e}")
-                
-                # On recharge la page pour éviter les conflits d'état Angular
+                else:
+                    print(f"⚠️ Impossible de localiser le champ pour '{word}'")
+
                 await page.reload()
                 await page.wait_for_timeout(5000)
 
