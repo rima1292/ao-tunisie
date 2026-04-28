@@ -1,94 +1,28 @@
-import os
-import asyncio
-from playwright.async_api import async_playwright
-from supabase import create_client
+name: Scan Quotidien Pépites Rim
 
-# 1. Configuration Supabase
-# Assure-toi que ces noms correspondent exactement à tes secrets GitHub
-url = os.environ.get("SUPABASE_URL")
-key = os.environ.get("SUPABASE_KEY")
-supabase = create_client(url, key)
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
 
-# Mot-clé de recherche
-keyword = "musique"
+jobs:
+  scrape:
+    runs-on: self-hosted
 
-async def scrape_tuneps():
-    async with async_playwright() as p:
-        # On utilise le runner local (ton PC)
-        # Tu peux mettre headless=False pour voir la fenêtre s'ouvrir sur ton écran
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
-        
-        try:
-            print(f"--- Lancement du scan pour : {keyword} ---")
-            
-            # Aller sur la page de recherche TUNEPS
-            await page.goto("https://www.tuneps.tn/search/searchAvisInp.do", wait_until="domcontentloaded", timeout=60000)
-            
-            # 2. Gestion des champs de saisie (Le fameux 2ème champ)
-            print("Attente des champs de saisie...")
-            await page.wait_for_selector('input', timeout=30000)
-            
-            inputs = page.locator('input')
-            count_inputs = await inputs.count()
-            print(f"DEBUG: {count_inputs} champs trouves sur la page.")
+    steps:
+      - name: Récupérer le code de Rim
+        uses: actions/checkout@v4
 
-            if count_inputs >= 2:
-                print("Action : Saisie dans le DEUXIEME champ...")
-                # On clique d'abord pour donner le focus, puis on remplit
-                await inputs.nth(1).click()
-                await inputs.nth(1).fill(keyword)
-                await page.keyboard.press("Enter")
-                print(f"Mot-cle '{keyword}' envoye.")
-            else:
-                print("Erreur : Impossible de trouver le deuxième champ de saisie.")
-                return
+      - name: Installer les outils (Playwright & Supabase)
+        run: |
+          python -m pip install --upgrade pip
+          pip install supabase playwright
+          python -m playwright install chromium
 
-            # 3. Attente du chargement des resultats
-            print("⏳ Attente des resultats (12s)...")
-            await page.wait_for_timeout(12000) 
-
-            # 4. Extraction "Robuste" (On scanne les lignes du tableau)
-            rows = await page.locator("tr").all()
-            print(f"Analyse de {len(rows)} lignes potentielles...")
-            
-            offres_trouvees = 0
-            for row in rows:
-                text = await row.inner_text()
-                # On vérifie si la ligne contient du texte et n'est pas une entête
-                if keyword.lower() in text.lower():
-                    cells = await row.locator("td").all()
-                    if len(cells) >= 5:
-                        # Structure typique TUNEPS : Col 1=Org, Col 3=Titre, Col 4=Date
-                        org = (await cells[1].inner_text()).strip()
-                        titre = (await cells[3].inner_text()).strip()
-                        date = (await cells[4].inner_text()).strip()
-                        
-                        if "aucun" not in titre.lower():
-                            print(f"💾 Capture : {titre[:50]}...")
-                            
-                            # Envoi vers Supabase
-                            try:
-                                supabase.table("offres").insert({
-                                    "titre": titre, 
-                                    "organisme": org,
-                                    "date_expiration": date, 
-                                    "secteur": "TUNEPS"
-                                }).execute()
-                                offres_trouvees += 1
-                            except Exception as e_db:
-                                print(f"Erreur insertion Supabase : {e_db}")
-
-            print(f"--- Succes : {offres_trouvees} offres envoyees en base ! ---")
-
-        except Exception as e:
-            print(f"Erreur Critique : {e}")
-        finally:
-            await browser.close()
-            print("--- Fin du script ---")
-
-if __name__ == "__main__":
-    asyncio.run(scrape_tuneps())
+      - name: Lancer la recherche de pépites
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # SOLUTION : Force l'affichage des emojis sur Windows
+          PYTHONIOENCODING: utf-8
+        run: python rim.py
