@@ -12,7 +12,7 @@ keyword = "musique"
 
 async def scrape_tuneps():
     async with async_playwright() as p:
-        # On garde headless=False pour que tu puisses voir le succès sur ton écran
+        # headless=False pour voir la correction sur ton écran
         browser = await p.chromium.launch(headless=False)
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -20,62 +20,59 @@ async def scrape_tuneps():
         page = await context.new_page()
         
         try:
-            print(f"--- Connexion a la page stable : /portail/offres ---")
-            
-            # 1. Navigation vers l'URL que tu as identifiée
+            print(f"--- Connexion à TUNEPS ---")
             await page.goto("https://www.tuneps.tn/portail/offres", wait_until="networkidle", timeout=60000)
             
-            # On attend que le formulaire soit bien là
-            await page.wait_for_timeout(5000)
+            # On attend que les champs de filtrage apparaissent
+            await page.wait_for_selector('input', timeout=20000)
+            await page.wait_for_timeout(3000)
 
-            # 2. Recherche du champ de saisie
-            # Sur cette page, on cherche souvent un input type text
-            print("Recherche du champ de recherche...")
-            search_input = page.locator('input[type="text"]').first
+            # CORRECTIF : Cibler précisément le champ "Objet A.O"
+            # Dans ta capture, c'est le DEUXIÈME input de la ligne de filtre
+            print("Action : Saisie dans le champ Objet A.O...")
             
-            if await search_input.is_visible():
-                await search_input.click()
-                await search_input.fill(keyword)
-                await page.keyboard.press("Enter")
-                print(f"Recherche pour '{keyword}' lancee.")
-            else:
-                print("Champ de recherche non detecte, tentative alternative...")
-                # Si le premier echoue, on remplit le 2eme champ comme tu l'as suggere
-                await page.locator('input').nth(1).fill(keyword)
-                await page.keyboard.press("Enter")
+            # On utilise un sélecteur plus précis pour éviter le premier champ (N° A.O)
+            tous_les_inputs = page.locator('input')
+            
+            # On remplit le deuxième champ (index 1)
+            await tous_les_inputs.nth(1).click()
+            await tous_les_inputs.nth(1).fill(keyword)
+            
+            # On clique sur le bouton "Rechercher" bleu
+            await page.locator('button:has-text("Rechercher")').click()
+            
+            print(f"Recherche lancée pour l'objet : {keyword}")
 
-            # 3. Attente des resultats
-            print("Attente du chargement du tableau (12s)...")
-            await page.wait_for_timeout(12000) 
+            # 3. Attente du chargement des résultats réels
+            await page.wait_for_timeout(10000) 
 
-            # 4. Extraction des lignes
-            # On cible les lignes du tableau (souvent dans un <tbody>)
+            # 4. Extraction des lignes (si le tableau n'est plus vide)
             rows = await page.locator("tr").all()
-            print(f"Analyse de {len(rows)} lignes trouvees...")
+            print(f"Analyse de {len(rows)} lignes trouvées...")
             
             count = 0
             for row in rows:
                 text = await row.inner_text()
-                if keyword.lower() in text.lower():
+                # On vérifie si la ligne contient le mot-clé et n'est pas le message "vide"
+                if keyword.lower() in text.lower() and "Désolé" not in text:
                     cells = await row.locator("td").all()
-                    if len(cells) >= 3:
-                        # On adapte les index selon la structure de cette page
-                        org = (await cells[1].inner_text()).strip() if len(cells) > 1 else "Inconnu"
-                        titre = (await cells[2].inner_text()).strip() if len(cells) > 2 else "Sans titre"
+                    if len(cells) >= 4:
+                        # Index basés sur ton tableau : 1=Acheteur, 3=Objet
+                        org = (await cells[1].inner_text()).strip()
+                        titre = (await cells[3].inner_text()).strip()
                         
-                        if "aucun" not in titre.lower():
-                            print(f"Capture : {titre[:50]}...")
-                            try:
-                                supabase.table("offres").insert({
-                                    "titre": titre,
-                                    "organisme": org,
-                                    "secteur": "TUNEPS"
-                                }).execute()
-                                count += 1
-                            except Exception as e_db:
-                                print(f"Erreur DB : {e_db}")
+                        print(f"Pépite trouvée : {titre[:50]}...")
+                        try:
+                            supabase.table("offres").insert({
+                                "titre": titre,
+                                "organisme": org,
+                                "secteur": "TUNEPS"
+                            }).execute()
+                            count += 1
+                        except Exception as e_db:
+                            print(f"Erreur DB : {e_db}")
 
-            print(f"Termine : {count} nouvelles pépites en base !")
+            print(f"Terminé : {count} offres ajoutées.")
 
         except Exception as e:
             print(f"Erreur : {e}")
