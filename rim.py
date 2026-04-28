@@ -3,7 +3,7 @@ import asyncio
 from playwright.async_api import async_playwright
 from supabase import create_client
 
-# Config Supabase
+# 1. Configuration Supabase
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 supabase = create_client(url, key)
@@ -17,56 +17,63 @@ async def scrape_tuneps():
         page = await context.new_page()
         
         try:
-            print("🌐 Connexion au portail TUNEPS...")
+            print("🌐 Connexion à TUNEPS...")
             await page.goto("https://www.tuneps.tn/search", wait_until="domcontentloaded", timeout=60000)
             
-            # Pause de sécurité pour laisser le temps au DOM de se stabiliser
-            await page.wait_for_timeout(10000)
+            # Attente longue pour que les scripts Angular se stabilisent sur GitHub
+            await page.wait_for_timeout(15000)
 
             for word in keywords:
-                print(f"🚀 Injection forcée pour : {word}")
+                print(f"🚀 Tentative d'injection pour : {word}")
                 
-                # On utilise l'ID 'mat-input-0' que tu as extrait du HTML
-                # On force la valeur et on lève les verrous Angular par JS
+                # JavaScript pour trouver l'input par sa classe plutôt que son ID dynamique
+                # On force aussi la suppression de l'attribut disabled
                 try:
                     await page.evaluate(f"""
                         (val) => {{
-                            const input = document.querySelector('#mat-input-0') || document.querySelector('input[matinput]');
+                            const input = document.querySelector('input.mat-input-element') || document.querySelector('input[matinput]');
                             if (input) {{
-                                input.disabled = false; // On force l'activation
+                                input.disabled = false;
+                                input.readOnly = false;
                                 input.value = val;
+                                // On déclenche les événements pour qu'Angular détecte la saisie
                                 input.dispatchEvent(new Event('input', {{ bubbles: true }}));
                                 input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                input.dispatchEvent(new Event('blur', {{ bubbles: true }}));
                             }}
                         }}
                     """, word)
                     
-                    # On clique sur 'Rechercher' (ton bouton mat-primary)
-                    await page.locator("button.mat-primary").filter(has_text="Rechercher").click()
+                    # On laisse un court instant pour que le bouton 'Rechercher' s'active
+                    await page.wait_for_timeout(2000)
                     
-                    # Attente du tableau
-                    await page.wait_for_timeout(8000)
+                    # Clic sur le bouton de recherche
+                    search_btn = page.locator("button.mat-primary").filter(has_text="Rechercher")
+                    await search_btn.click()
+                    
+                    # Attente des résultats
+                    await page.wait_for_timeout(10000)
                     
                     rows = await page.locator("tr.mat-row").all()
-                    print(f"✅ {len(rows)} offres trouvées.")
+                    print(f"✅ {len(rows)} offres trouvées pour '{word}'.")
                     
                     for row in rows:
                         cells = await row.locator("td.mat-cell").all()
                         if len(cells) >= 5:
-                            # Extraction selon la structure de ta vidéo
                             org = (await cells[1].inner_text()).strip()
                             titre = (await cells[3].inner_text()).strip()
                             date = (await cells[4].inner_text()).strip()
 
+                            # Insertion Supabase
                             supabase.table("offres").insert({
                                 "titre": titre, "organisme": org,
                                 "date_expiration": date, "secteur": "TUNEPS"
                             }).execute()
                             
                 except Exception as e:
-                    print(f"⚠️ Erreur sur '{word}': {e}")
+                    print(f"⚠️ Erreur pour '{word}': {e}")
                 
-                # Reset pour le prochain mot
+                # On recharge la page pour éviter les conflits d'état Angular
                 await page.reload()
                 await page.wait_for_timeout(5000)
 
