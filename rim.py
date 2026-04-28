@@ -8,12 +8,12 @@ url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 supabase = create_client(url, key)
 
-# Mot-clé de recherche
+# Mot-cle de recherche
 keyword = "musique"
 
 async def scrape_tuneps():
     async with async_playwright() as p:
-        # headless=True pour le runner, mais tu peux mettre False sur ton PC pour voir
+        # headless=True pour le runner local
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -23,10 +23,10 @@ async def scrape_tuneps():
         try:
             print(f"--- Lancement du scan pour : {keyword} ---")
             
-            # Navigation vers la page de recherche directe
+            # Navigation vers la page de recherche
             await page.goto("https://www.tuneps.tn/search/searchAvisInp.do", wait_until="domcontentloaded", timeout=60000)
             
-            # 2. Ciblage du DEUXIÈME champ (nth(1))
+            # 2. Ciblage du DEUXIEME champ
             print("Attente des champs de saisie...")
             await page.wait_for_selector('input', timeout=30000)
             
@@ -34,28 +34,25 @@ async def scrape_tuneps():
             count = await inputs.count()
             
             if count >= 2:
-                print(f"Action : Saisie dans le 2ème champ sur {count} trouvés...")
-                # On clique et on remplit le deuxième champ (index 1)
+                print(f"Action : Saisie dans le 2eme champ...")
                 await inputs.nth(1).click()
                 await inputs.nth(1).fill(keyword)
                 await page.keyboard.press("Enter")
-                print(f"Mot-clé '{keyword}' envoyé.")
             else:
-                print("Erreur : Impossible de trouver le deuxième champ.")
+                print("Erreur : Pas assez de champs trouves.")
                 return
 
-            # 3. Attente du chargement des résultats
-            print("⏳ Attente des résultats (12s)...")
+            # 3. Attente des resultats
+            print("Attente des resultats (12s)...")
             await page.wait_for_timeout(12000) 
 
-            # 4. Extraction des données
+            # 4. Extraction
             rows = await page.locator("tr").all()
-            print(f"Analyse de {len(rows)} lignes potentielles...")
+            print(f"Analyse de {len(rows)} lignes...")
             
             offres_ajoutees = 0
             for row in rows:
                 text = await row.inner_text()
-                # On vérifie si la ligne contient le mot-clé
                 if keyword.lower() in text.lower():
                     cells = await row.locator("td").all()
                     if len(cells) >= 5:
@@ -63,10 +60,8 @@ async def scrape_tuneps():
                         titre = (await cells[3].inner_text()).strip()
                         date = (await cells[4].inner_text()).strip()
                         
-                        # On évite les lignes vides ou de message "aucun résultat"
                         if titre and "aucun" not in titre.lower():
-                            print(f"💾 Capture : {titre[:50]}...")
-                            
+                            print(f"Capture : {titre[:50]}")
                             try:
                                 supabase.table("offres").insert({
                                     "titre": titre, 
@@ -78,7 +73,7 @@ async def scrape_tuneps():
                             except Exception as e_db:
                                 print(f"Erreur Supabase : {e_db}")
 
-            print(f"--- Terminé : {offres_ajoutees} offres en base ! ---")
+            print(f"Termine : {offres_ajoutees} offres en base.")
 
         except Exception as e:
             print(f"Erreur Critique : {e}")
