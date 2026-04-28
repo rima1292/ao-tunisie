@@ -27,4 +27,4 @@ jobs:
         run: |
           python rim.py
           python rim_audio.py
-          
+          python rim_sono.py
