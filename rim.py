@@ -12,68 +12,71 @@ keywords = ["musique", "audiovisuel", "sonorisation"]
 
 async def scrape_tuneps():
     async with async_playwright() as p:
+        # On lance avec un User-Agent réel pour éviter d'être bloqué
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(viewport={'width': 1280, 'height': 800})
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+        )
         page = await context.new_page()
         
         try:
-            print("🌐 Accès à TUNEPS...")
-            await page.goto("https://www.tuneps.tn/search", wait_until="networkidle", timeout=60000)
-            await page.wait_for_timeout(10000)
+            print("🌐 Connexion à TUNEPS...")
+            await page.goto("https://www.tuneps.tn/search", wait_until="networkidle")
+            await page.wait_for_timeout(5000)
 
             for word in keywords:
-                print(f"🔍 Traitement de : {word}")
+                print(f"🔍 Tentative sur : {word}")
                 
-                # Étape 1 : Injection du texte
-                await page.evaluate(f"""
-                    (val) => {{
-                        const input = document.querySelector('#mat-input-0') || document.querySelector('input[matinput]');
-                        if (input) {{
-                            input.value = val;
-                            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                            input.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                        }}
-                    }}
-                """, word)
+                # 1. On s'assure que le champ est là
+                input_selector = "input[matinput], #mat-input-0"
+                await page.wait_for_selector(input_selector, timeout=20000)
                 
-                # Étape 2 : Clic sur Rechercher
-                search_btn = page.locator("button.mat-primary").filter(has_text="Rechercher")
-                await search_btn.click()
+                # 2. On tape "comme un humain" pour activer les scripts Angular
+                await page.click(input_selector)
+                await page.fill(input_selector, "") # On vide
+                await page.type(input_selector, word, delay=150) # On tape lentement
                 
-                # Étape 3 : Attendre que le loader disparaisse (ton idée !)
-                # On attend que la table soit visible ou qu'un certain délai de stabilité passe
-                print("⏳ Attente de la mise à jour du tableau...")
-                await page.wait_for_timeout(15000) 
+                # 3. LE CLIC FORCE (via JS)
+                # On cherche tous les boutons et on clique sur celui qui contient "Rechercher"
+                await page.evaluate("""() => {
+                    const btns = Array.from(document.querySelectorAll('button'));
+                    const target = btns.find(b => b.innerText.includes('Rechercher'));
+                    if (target) {
+                        target.scrollIntoView();
+                        target.click();
+                    }
+                }""")
+                
+                print("⏳ Recherche lancée, attente des lignes...")
+                
+                # 4. On attend que la table se mette à jour
+                # Au lieu d'attendre un sélecteur, on attend que le réseau se calme
+                await page.wait_for_timeout(12000)
 
-                # Étape 4 : Extraction des lignes
+                # 5. Extraction
                 rows = await page.locator("tr.mat-row").all()
-                print(f"✅ {len(rows)} offres détectées pour {word}")
+                print(f"✅ {len(rows)} offres trouvées.")
                 
                 for row in rows:
-                    try:
-                        cells = await row.locator("td.mat-cell").all()
-                        if len(cells) >= 5:
-                            org = (await cells[1].inner_text()).strip()
-                            titre = (await cells[3].inner_text()).strip()
-                            date = (await cells[4].inner_text()).strip()
+                    cells = await row.locator("td.mat-cell").all()
+                    if len(cells) >= 5:
+                        org = (await cells[1].inner_text()).strip()
+                        titre = (await cells[3].inner_text()).strip()
+                        date = (await cells[4].inner_text()).strip()
 
-                            # On évite d'insérer si c'est le message "aucun résultat"
-                            if "aucun" in titre.lower():
-                                continue
-
+                        if "aucun" not in titre.lower():
+                            print(f"💾 Sauvegarde : {titre[:40]}...")
                             supabase.table("offres").insert({
                                 "titre": titre, "organisme": org,
                                 "date_expiration": date, "secteur": "TUNEPS"
                             }).execute()
-                    except:
-                        continue
-                
-                # Reset pour le prochain mot
-                await page.goto("https://www.tuneps.tn/search", wait_until="domcontentloaded")
-                await page.wait_for_timeout(5000)
+
+                # 6. Reset propre
+                await page.goto("https://www.tuneps.tn/search")
+                await page.wait_for_timeout(3000)
 
         except Exception as e:
-            print(f"❌ Erreur : {e}")
+            print(f"❌ Erreur détectée : {e}")
         finally:
             await browser.close()
 
