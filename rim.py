@@ -3,69 +3,73 @@ import asyncio
 from playwright.async_api import async_playwright
 from supabase import create_client
 
+# Config Supabase
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 supabase = create_client(url, key)
 
-keywords = ["musique", "audiovisuel", "sonorisation"]
+# ON TESTE UN SEUL MOT POUR ÉVITER LE TIMEOUT
+keyword = "musique"
 
 async def scrape_tuneps():
     async with async_playwright() as p:
-        # On simule un vrai navigateur Windows pour éviter le blocage pare-feu
-        browser = await p.chromium.launch(headless=True)
+        # Configuration robuste pour GitHub Actions
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            extra_http_headers={
-                "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
-            }
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
         
         try:
-            print("🌐 Tentative d'accès furtif à TUNEPS...")
-            # On utilise 'domcontentloaded' au lieu de 'networkidle' car le réseau peut être bridé
-            response = await page.goto("https://www.tuneps.tn/search", wait_until="domcontentloaded", timeout=60000)
+            print(f"🌐 Lancement du test unique pour : {keyword}")
+            # On attend que le dom soit chargé, sans attendre les scripts externes (networkidle est trop risqué)
+            await page.goto("https://www.tuneps.tn/search", wait_until="domcontentloaded", timeout=60000)
             
-            if response.status != 200:
-                print(f"⚠️ Le site répond avec un code {response.status}. Blocage probable.")
+            # 1. Localisation et Saisie
+            input_selector = 'input[matinput], #mat-input-0'
+            await page.wait_for_selector(input_selector, timeout=20000)
+            
+            await page.click(input_selector)
+            await page.fill(input_selector, keyword)
+            
+            # Étape Cruciale : On simule une sortie du champ pour "réveiller" Angular
+            await page.keyboard.press("Tab")
+            await page.wait_for_timeout(1000)
+            
+            # 2. Clic sur le bouton de recherche (via JS pour plus de fiabilité)
+            print("🔘 Tentative de clic sur Rechercher...")
+            await page.evaluate("""() => {
+                const searchBtn = Array.from(document.querySelectorAll('button'))
+                                       .find(b => b.innerText.includes('Rechercher'));
+                if (searchBtn) {
+                    searchBtn.click();
+                }
+            }""")
+            
+            # 3. Attente prolongée pour les résultats (on a de la marge avec un seul mot)
+            print("⏳ Attente des résultats (15s)...")
+            await page.wait_for_timeout(15000)
 
-            for word in keywords:
-                print(f"🔍 Recherche active : {word}")
-                
-                # Injection directe via JS pour gagner du temps
-                await page.evaluate(f"""
-                    (val) => {{
-                        const input = document.querySelector('input[matinput]') || document.querySelector('#mat-input-0');
-                        if (input) {{
-                            input.value = val;
-                            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        }}
-                        const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Rechercher'));
-                        if (btn) btn.click();
-                    }}
-                """, word)
-                
-                await page.wait_for_timeout(10000)
-
-                rows = await page.locator("tr.mat-row").all()
-                found = 0
-                for row in rows:
-                    cells = await row.locator("td.mat-cell").all()
-                    if len(cells) >= 5:
-                        titre = (await cells[3].inner_text()).strip()
-                        if "aucun" not in titre.lower():
-                            supabase.table("offres").insert({
-                                "titre": titre, 
-                                "organisme": (await cells[1].inner_text()).strip(),
-                                "date_expiration": (await cells[4].inner_text()).strip(), 
-                                "secteur": "TUNEPS"
-                            }).execute()
-                            found += 1
-                print(f"✅ {found} offres pour {word}")
+            # 4. Extraction
+            rows = await page.locator("tr.mat-row").all()
+            print(f"📊 Résultats : {len(rows)} offres trouvées.")
+            
+            for row in rows:
+                cells = await row.locator("td.mat-cell").all()
+                if len(cells) >= 5:
+                    titre = (await cells[3].inner_text()).strip()
+                    if "aucun" not in titre.lower():
+                        org = (await cells[1].inner_text()).strip()
+                        date = (await cells[4].inner_text()).strip()
+                        
+                        print(f"💾 Offre captée : {titre[:50]}")
+                        supabase.table("offres").insert({
+                            "titre": titre, "organisme": org,
+                            "date_expiration": date, "secteur": "TUNEPS"
+                        }).execute()
 
         except Exception as e:
-            print(f"❌ Erreur réseau/structure : {e}")
+            print(f"❌ Erreur lors du test unique : {e}")
         finally:
             await browser.close()
 
